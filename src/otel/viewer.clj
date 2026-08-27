@@ -219,6 +219,7 @@
       (#{"chat" "text_completion" "generate_content"} operation) "Generation"
       (attribute-value attributes "samizdat.turn.number") "Turn"
       (attribute-value attributes "samizdat.branch.id") "Branch"
+      (attribute-value attributes "samizdat.control.driver") "Control"
       (or (= operation "invoke_agent")
           (attribute-value attributes "samizdat.run.id")) "Agent"
       :else nil)))

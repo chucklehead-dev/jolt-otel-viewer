@@ -100,15 +100,18 @@
          [{:spanId "agent" :name "samizdat run" :durationNs 100
            :attributes {"samizdat.run.id" "run-1"}
            :children
-           [{:spanId "branch" :name "branch W0" :durationNs 90
-             :attributes {"samizdat.branch.id" "W0"}
+           [{:spanId "control" :name "control loop" :durationNs 95
+             :attributes {"samizdat.control.driver" "beam"}
              :children
-             [{:spanId "turn" :name "turn 1" :durationNs 80
-               :attributes {"samizdat.turn.number" 1}
+             [{:spanId "branch" :name "branch W0" :durationNs 90
+               :attributes {"samizdat.branch.id" "W0"}
                :children
-               [{:spanId "generation" :name "chat" :durationNs 70
-                 :attributes
-                 {"gen_ai.operation.name" "chat"
+               [{:spanId "turn" :name "turn 1" :durationNs 80
+                 :attributes {"samizdat.turn.number" 1}
+                 :children
+                 [{:spanId "generation" :name "chat" :durationNs 70
+                   :attributes
+                   {"gen_ai.operation.name" "chat"
                   "gen_ai.provider.name" "openai"
                   "gen_ai.request.model" "local-model"
                   "gen_ai.usage.input_tokens" 42
@@ -123,14 +126,14 @@
                   "samizdat.tool.args" secret
                   "samizdat.response.content_state" "captured"
                   "samizdat.response.sanitized" sanitized}
-                 :children
-                 [{:spanId "tool" :name "read_file" :durationNs 10
-                   :attributes {"samizdat.tool.name" "read_file"
-                                "tool.call.arguments" secret}}]}]}]}]}]}
+                   :children
+                   [{:spanId "tool" :name "read_file" :durationNs 10
+                     :attributes {"samizdat.tool.name" "read_file"
+                                  "tool.call.arguments" secret}}]}]}]}]}]}]}
         model (viewer/trace-model {:trace generation})
-        observation (get-in model [:trace :spans 3 :generation])
+        observation (get-in model [:trace :spans 4 :generation])
         html (viewer/render-fragment {:trace generation})]
-    (doseq [role ["Agent" "Branch" "Turn" "Generation" "Tool"]]
+    (doseq [role ["Agent" "Control" "Branch" "Turn" "Generation" "Tool"]]
       (is (str/includes? html (str ">" role "</span>"))))
     (doseq [value ["openai" "local-model" "42" "9" "7" "stop"]]
       (is (str/includes? html value)))
