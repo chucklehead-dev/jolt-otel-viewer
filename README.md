@@ -4,6 +4,20 @@ A small, host-agnostic OpenTelemetry HTML renderer for Jolt. Hosts provide
 already-bounded trace summaries, logs, and trace trees; this package owns no
 database, HTTP server, authentication, or exporter lifecycle.
 
+## Install
+
+Pin the exact commit you have reviewed:
+
+```clojure
+{:deps
+ {io.github.chucklehead-dev/jolt-otel-viewer
+  {:git/url "https://github.com/chucklehead-dev/jolt-otel-viewer.git"
+   :git/sha "<full-commit-sha>"}}}
+```
+
+The placeholder must be replaced with a full 40-character commit SHA. This
+repository does not publish mutable dependency coordinates.
+
 The baseline output uses semantic HTML, `<details>`, ordinary links and forms,
 and scoped CSS. `enhancement-script` optionally adds EventSource live-region
 updates and native `<dialog>` trace previews. It is compatible with a strict
@@ -58,3 +72,11 @@ Index inputs use `:summary`, `:traces`, and `:logs`; trace-detail input uses
 under `:children`. The package rejects malformed trace IDs and caps rendered
 tree depth, but the host must still impose query/result-count and field-size
 limits before rendering.
+
+## Development and releases
+
+Run `jolt -M:test` with Jolt v0.7.27 or newer. A release is an immutable Git
+tag pointing at a commit for which the test workflow passed; consumers should
+continue to pin that commit SHA even when also recording the tag.
+
+This project is licensed under the Eclipse Public License 2.0; see `LICENSE`.
