@@ -1,0 +1,18 @@
+{:paths ["src" "resources"]
+
+ :deps {jolt-lang/time
+        {:git/url "https://github.com/jolt-lang/time.git"
+         :git/sha "70dfb7981ef4ed70c5d142109d56a90edfb79cef"}
+        jolt-lang/jolt-crypto
+        {:git/url "https://github.com/jolt-lang/jolt-crypto"
+         :git/sha "0adae49db6064180374ffdcfc72b5b9ac01888cd"}
+        yogthos/selmer
+        {:git/url "https://github.com/yogthos/Selmer"
+         :git/sha "fa4a42e77b48905f87b3bf0dc1c698f2c329c722"}}
+
+ :jolt/build {:embed ["resources"]}
+
+ :aliases {:test {:extra-paths ["test"]
+                  :main-opts ["-m" "otel.viewer-test"]}}
+
+ :tasks {test "jolt -M:test"}}
