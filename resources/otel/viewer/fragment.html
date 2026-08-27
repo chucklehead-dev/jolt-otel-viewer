@@ -48,6 +48,19 @@
   </section>
   {% endif %}
   {% else %}
+  {% if hasTraceFilters %}
+  <section class="otel-workbench" aria-labelledby="trace-workbench-heading">
+    <div class="otel-section-heading"><h2 id="trace-workbench-heading">Find traces</h2><small>Host-filtered</small></div>
+    <form class="otel-filter-form" action="{{traceFilters.action}}" method="get">
+      <label><span>Service</span><select name="service"><option value="">All services</option>{% for option in traceFilters.serviceOptions %}<option value="{{option.value}}"{% if option.selected %} selected{% endif %}>{{option.label}}</option>{% endfor %}</select></label>
+      <label><span>Operation or name</span><input type="search" name="operation" value="{{traceFilters.operation}}" autocomplete="off"></label>
+      <label><span>Status</span><select name="status"><option value="">All statuses</option>{% for option in traceFilters.statusOptions %}<option value="{{option.value}}"{% if option.selected %} selected{% endif %}>{{option.label}}</option>{% endfor %}</select></label>
+      <label><span>Minimum duration (ms)</span><input type="number" name="min-duration-ms" min="0" step="any" inputmode="decimal" value="{{traceFilters.minDurationMs}}"></label>
+      <label><span>Time window</span><select name="window"><option value="">Any time</option>{% for option in traceFilters.windowOptions %}<option value="{{option.value}}"{% if option.selected %} selected{% endif %}>{{option.label}}</option>{% endfor %}</select></label>
+      <div class="otel-filter-actions"><button type="submit">Apply filters</button><a href="{{traceFilters.action}}">Clear</a></div>
+    </form>
+  </section>
+  {% endif %}
   <div id="otel-live"{% if streaming %} data-otel-live="{{liveMarker}}"{% endif %}>{{liveContent}}</div>
   {% if enhanced %}
   <dialog class="otel-trace-dialog" data-otel-dialog aria-label="Trace detail">

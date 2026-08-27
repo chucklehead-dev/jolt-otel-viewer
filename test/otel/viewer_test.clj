@@ -21,6 +21,16 @@
                            :durationNs 500000 :status "error"}]}]
    :logs [{:timestamp "now" :severity "ERROR" :body "failed"}]})
 
+(def trace-filters
+  {:selected {:service "api" :operation "GET /users" :status "error"
+              :min-duration-ms "12.5" :window "1h"}
+   :service-options [{:value "api" :label "API"}
+                     {:value "worker" :label "Worker"}]
+   :status-options [{:value "ok" :label "OK"}
+                    {:value "error" :label "Error"}]
+   :window-options [{:value "15m" :label "Last 15 minutes"}
+                    {:value "1h" :label "Last hour"}]})
+
 (deftest mount-prefixes
   (is (= "" (viewer/normalize-base-path nil)))
   (is (= "/ops/otel" (viewer/normalize-base-path "ops/otel///")))
@@ -70,6 +80,80 @@
     (is (not (str/includes? script "eval(")))
     (is (not (str/includes? script "new Function")))
     (is (not (str/includes? script "innerHTML")))))
+
+(deftest trace-workbench-is-an-optional-zero-javascript-get-form
+  (let [html (viewer/render-page
+              (assoc index-data
+                     :base-path "/ops/otel/"
+                     :trace-filters trace-filters))]
+    (is (str/includes? html "<form class=\"otel-filter-form\" action=\"/ops/otel\" method=\"get\""))
+    (is (str/includes? html "name=\"operation\" value=\"GET /users\""))
+    (is (str/includes? html "name=\"min-duration-ms\""))
+    (is (str/includes? html "value=\"12.5\""))
+    (is (str/includes? html "value=\"api\" selected>API</option>"))
+    (is (str/includes? html "value=\"error\" selected>Error</option>"))
+    (is (str/includes? html "value=\"1h\" selected>Last hour</option>"))
+    (is (str/includes? html "href=\"/ops/otel\">Clear</a>"))
+    (is (str/includes? html (str "href=\"/ops/otel/traces/" trace-id "\"")))
+    (is (not (str/includes? html "data-otel-trace"))
+        "trace navigation remains an ordinary link without enhancement")
+    (is (not (str/includes? html "<script"))
+        "filtering and trace navigation need no JavaScript"))
+  (let [html (viewer/render-fragment index-data)]
+    (is (not (str/includes? html "otel-filter-form"))
+        "the workbench is absent unless the host supplies its model")))
+
+(deftest trace-workbench-contract-is-bounded-validated-and-escaped
+  (let [services (mapv (fn [i] {:value (str "svc" i)
+                                 :label (str "Service " i)})
+                       (range 80))
+        model (viewer/trace-filter-model
+               "/mounted"
+               {:selected {:service "svc49" :operation (apply str (repeat 250 "x"))
+                           :status "missing" :min-duration-ms "-1"
+                           :window "missing"}
+                :service-options services
+                :status-options services
+                :window-options services})]
+    (is (= "/mounted" (:action model)))
+    (is (= 50 (count (:serviceOptions model))))
+    (is (= 50 (count (:statusOptions model))))
+    (is (= 50 (count (:windowOptions model))))
+    (is (= "svc49" (:service model)))
+    (is (true? (get-in model [:serviceOptions 49 :selected])))
+    (is (= 200 (count (:operation model))))
+    (is (= "" (:status model)))
+    (is (= "" (:window model)))
+    (is (= "" (:minDurationMs model))))
+  (is (nil? (viewer/trace-filter-model "/mounted" nil)))
+  (is (= [] (:serviceOptions
+             (viewer/trace-filter-model nil {:service-options 42})))
+      "invalid option collections default to empty")
+  (let [model (viewer/trace-filter-model
+               nil
+               {:selected {:service "outside" :operation 42
+                           :status "ok" :min-duration-ms "1.25"
+                           :window "1h"}
+                :service-options [{:value "inside" :label "Inside"}]
+                :status-options [{:value "ok" :label "OK"}]
+                :window-options [{:value "1h" :label "Last hour"}]})]
+    (is (= "" (:service model)) "unknown option values default to all")
+    (is (= "" (:operation model)) "non-string free text defaults to blank")
+    (is (= "ok" (:status model)))
+    (is (= "1.25" (:minDurationMs model)))
+    (is (= "1h" (:window model))))
+  (let [html (viewer/render-fragment
+              (assoc index-data :trace-filters
+                     {:selected {:service "svc&danger"
+                                 :operation "GET \"/unsafe\" <script>"
+                                 :status "" :window ""}
+                      :service-options [{:value "svc&danger"
+                                         :label "<script>service</script>"}]}))]
+    (is (str/includes? html "value=\"svc&amp;danger\" selected"))
+    (is (str/includes? html "&lt;script&gt;service&lt;/script&gt;"))
+    (is (str/includes? html
+                       "value=\"GET &quot;/unsafe&quot; &lt;script&gt;\""))
+    (is (not (str/includes? html "<script>service")))))
 
 (deftest public-models-accept-host-shaped-bounded-data
   (let [model (viewer/index-model

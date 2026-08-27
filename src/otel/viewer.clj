@@ -14,7 +14,13 @@
             [selmer.util :as selmer-util]))
 
 (def ^:private max-render-depth 64)
+(def ^:private max-filter-options 50)
+(def ^:private max-filter-value-length 100)
+(def ^:private max-filter-label-length 200)
+(def ^:private max-operation-length 200)
+(def ^:private max-duration-length 32)
 (def ^:private trace-id-pattern #"[0-9a-f]{32}")
+(def ^:private duration-pattern #"[0-9]+(?:\.[0-9]+)?")
 (def ^:private fragment-template
   (delay (slurp (io/resource "otel/viewer/fragment.html"))))
 (def ^:private page-template
@@ -60,6 +66,67 @@
     (if (str/blank? suffix)
       (if (str/blank? base) "/" base)
       (str base "/" suffix))))
+
+(defn- bounded-string [value limit]
+  (when (string? value)
+    (let [value (str/trim value)]
+      (when-not (str/blank? value)
+        (subs value 0 (min limit (count value)))))))
+
+(defn- filter-options [options]
+  (loop [remaining (seq (take max-filter-options
+                              (if (sequential? options) options [])))
+         seen #{}
+         result []]
+    (if-let [option (first remaining)]
+      (let [value (bounded-string (:value option) max-filter-value-length)
+            label (bounded-string (:label option) max-filter-label-length)]
+        (if (or (nil? value) (contains? seen value))
+          (recur (next remaining) seen result)
+          (recur (next remaining)
+                 (conj seen value)
+                 (conj result {:value value :label (or label value)}))))
+      result)))
+
+(defn- selected-option [selected options]
+  (let [selected (bounded-string selected max-filter-value-length)]
+    (if (some #(= selected (:value %)) options) selected "")))
+
+(defn- selected-options [options selected]
+  (mapv #(assoc % :selected (= selected (:value %))) options))
+
+(defn trace-filter-model
+  "Build the optional trace-workbench presentation contract.
+
+  `filters` is host-shaped data with `:selected` keys `:service`, `:operation`,
+  `:status`, `:min-duration-ms`, and `:window`, plus vectors named
+  `:service-options`, `:status-options`, and `:window-options`. Each option is
+  `{:value string :label string}`. Query interpretation and option discovery
+  remain host-owned. The renderer caps each option vector at 50 entries,
+  bounds displayed strings, and clears selected enumerations absent from the
+  visible options. Returns nil when the host omits `filters`."
+  [base-path filters]
+  (when (map? filters)
+    (let [selected (:selected filters)
+          services (filter-options (:service-options filters))
+          statuses (filter-options (:status-options filters))
+          windows (filter-options (:window-options filters))
+          service (selected-option (:service selected) services)
+          status (selected-option (:status selected) statuses)
+          window (selected-option (:window selected) windows)
+          operation (or (bounded-string (:operation selected) max-operation-length) "")
+          duration (or (bounded-string (:min-duration-ms selected)
+                                       max-duration-length) "")
+          duration (if (re-matches duration-pattern duration) duration "")]
+      {:action (mounted-path base-path "")
+       :service service
+       :operation operation
+       :status status
+       :minDurationMs duration
+       :window window
+       :serviceOptions (selected-options services service)
+       :statusOptions (selected-options statuses status)
+       :windowOptions (selected-options windows window)})))
 
 (defn- duration-label [nanoseconds]
   (let [n (double (or nanoseconds 0))]
@@ -131,8 +198,9 @@
   "Build the bounded presentation model for a trace/log index. Hosts retain
   ownership of querying, authorization, limits, and ordering."
   [{:keys [title eyebrow base-path work-path work-label enhancement-path
-           live-attributes summary traces logs]}]
+           live-attributes summary traces logs trace-filters]}]
   (let [base (normalize-base-path base-path)
+        filters (trace-filter-model base trace-filters)
         trace-views
         (into []
               (comp
@@ -157,6 +225,8 @@
                         (mounted-path base enhancement-path))
      :streaming (boolean live-attributes)
      :liveMarker (text (get live-attributes "data-otel-live"))
+     :hasTraceFilters (boolean filters)
+     :traceFilters filters
      :stats [{:label "Traces" :value (or (:traceCount summary) 0)}
              {:label "Spans" :value (or (:spanCount summary) 0)}
              {:label "Logs" :value (or (:logCount summary) 0)}
