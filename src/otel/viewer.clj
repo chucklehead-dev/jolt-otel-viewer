@@ -19,6 +19,9 @@
 (def ^:private max-filter-label-length 200)
 (def ^:private max-operation-length 200)
 (def ^:private max-duration-length 32)
+(def ^:private max-post-actions 8)
+(def ^:private max-action-label-length 80)
+(def ^:private max-sanitized-response-length 2000)
 (def ^:private trace-id-pattern #"[0-9a-f]{32}")
 (def ^:private duration-pattern #"[0-9]+(?:\.[0-9]+)?")
 (def ^:private fragment-template
@@ -72,6 +75,36 @@
     (let [value (str/trim value)]
       (when-not (str/blank? value)
         (subs value 0 (min limit (count value)))))))
+
+(defn- bounded-display-string [value limit]
+  (when-let [value (bounded-string value (inc limit))]
+    (if (> (count value) limit)
+      (str (subs value 0 (max 0 (dec limit))) "…")
+      value)))
+
+(defn- bounded-display-value [value limit]
+  (when-not (nil? value)
+    (bounded-display-string (text value) limit)))
+
+(defn- build-post-actions [base-path actions work-path work-label]
+  (let [actions (if (sequential? actions) actions [])
+        actions (if work-path
+                  (cons {:path work-path
+                         :label (or work-label "Generate work")}
+                        actions)
+                  actions)]
+    (into []
+          (comp
+           (take max-post-actions)
+           (keep (fn [action]
+                   (when (map? action)
+                     (when-let [path (bounded-string (:path action)
+                                                    max-filter-label-length)]
+                       {:path (mounted-path base-path path)
+                        :label (or (bounded-string (:label action)
+                                                   max-action-label-length)
+                                   "Run")})))))
+          actions)))
 
 (defn- filter-options [options]
   (loop [remaining (seq (take max-filter-options
@@ -136,14 +169,81 @@
       (< n 1000000000.0) (format "%.2f ms" (/ n 1000000.0))
       :else (format "%.2f s" (/ n 1000000000.0)))))
 
+(defn- attribute-name [attribute]
+  (-> (text attribute)
+      (str/replace #"^:" "")
+      str/lower-case))
+
+(def ^:private sensitive-attribute-fragments
+  ["prompt" "system_instructions" "system.instructions" "reasoning"
+   "input.messages" "input_messages" "output.messages" "output_messages"
+   "request.messages" "request_messages" "message.content" "message_content"
+   "tool.call.arguments" "tool_call.arguments" "tool.calls.arguments"
+   "tool_calls.arguments" "tool.arguments" "tool_arguments" "tool.args"
+   "tool_args"])
+
+(defn- sensitive-attribute? [attribute]
+  (let [attribute (attribute-name attribute)]
+    (or (= attribute "samizdat.response.sanitized")
+        (= attribute "samizdat.response.content_state")
+        (= attribute "gen_ai.completion")
+        (= attribute "llm.completions")
+        (some #(str/includes? attribute %) sensitive-attribute-fragments))))
+
 (defn- attribute-rows [attributes]
   (cond
     (map? attributes)
     (mapv (fn [[k v]] {:name (text k) :value (text v)})
-          (sort-by (comp str key) attributes))
+          (sort-by (comp str key)
+                   (remove (comp sensitive-attribute? key) attributes)))
 
     (str/blank? (text attributes)) []
     :else [{:name "Attributes" :value (text attributes)}]))
+
+(defn- attribute-value [attributes name]
+  (when (map? attributes)
+    (some (fn [[k value]]
+            (when (= name (attribute-name k)) value))
+          attributes)))
+
+(defn- present-attribute [attributes name]
+  (bounded-display-value (attribute-value attributes name)
+                         max-filter-label-length))
+
+(defn- span-role [attributes]
+  (let [operation (some-> (attribute-value attributes "gen_ai.operation.name")
+                          text str/lower-case)]
+    (cond
+      (or (= operation "execute_tool")
+          (attribute-value attributes "samizdat.tool.name")) "Tool"
+      (#{"chat" "text_completion" "generate_content"} operation) "Generation"
+      (attribute-value attributes "samizdat.turn.number") "Turn"
+      (attribute-value attributes "samizdat.branch.id") "Branch"
+      (or (= operation "invoke_agent")
+          (attribute-value attributes "samizdat.run.id")) "Agent"
+      :else nil)))
+
+(defn- generation-view [attributes role]
+  (when (= "Generation" role)
+    (let [content-state (some-> (attribute-value attributes
+                                                "samizdat.response.content_state")
+                                text str/lower-case)
+          response (when (= "captured" content-state)
+                     (bounded-display-string
+                      (attribute-value attributes "samizdat.response.sanitized")
+                      max-sanitized-response-length))]
+      {:provider (present-attribute attributes "gen_ai.provider.name")
+       :model (or (present-attribute attributes "gen_ai.response.model")
+                  (present-attribute attributes "gen_ai.request.model"))
+       :inputTokens (present-attribute attributes "gen_ai.usage.input_tokens")
+       :outputTokens (present-attribute attributes "gen_ai.usage.output_tokens")
+       :cacheTokens (or (present-attribute attributes
+                                          "gen_ai.usage.cache_read.input_tokens")
+                        (present-attribute attributes
+                                          "gen_ai.usage.cached_input_tokens"))
+       :finishReason (present-attribute attributes "gen_ai.response.finish_reasons")
+       :responseRecorded (boolean response)
+       :response response})))
 
 (defn- flatten-tree
   ([forest] (flatten-tree forest 0))
@@ -176,18 +276,22 @@
           spans)))
 
 (defn- span-view [span]
-  {:id (text (:spanId span))
-   :parentId (text (:parentSpanId span))
-   :name (text (or (:name span) "(unnamed span)"))
-   :kind (text (:kind span))
-   :depth (min max-render-depth (max 0 (or (:depth span) 0)))
-   :duration (duration-label (:durationNs span))
-   :startPercent (:startPercent span)
-   :widthPercent (:widthPercent span)
-   :error (= "error" (str/lower-case (text (:status span))))
-   :statusMessage (text (:statusMessage span))
-   :open (zero? (or (:depth span) 0))
-   :attributes (attribute-rows (:attributes span))})
+  (let [attributes (:attributes span)
+        role (span-role attributes)]
+    {:id (text (:spanId span))
+     :parentId (text (:parentSpanId span))
+     :name (text (or (:name span) "(unnamed span)"))
+     :kind (text (:kind span))
+     :role role
+     :generation (generation-view attributes role)
+     :depth (min max-render-depth (max 0 (or (:depth span) 0)))
+     :duration (duration-label (:durationNs span))
+     :startPercent (:startPercent span)
+     :widthPercent (:widthPercent span)
+     :error (= "error" (str/lower-case (text (:status span))))
+     :statusMessage (text (:statusMessage span))
+     :open (zero? (or (:depth span) 0))
+     :attributes (attribute-rows attributes)}))
 
 (defn- log-view [log]
   {:timestamp (text (:timestamp log))
@@ -197,9 +301,10 @@
 (defn index-model
   "Build the bounded presentation model for a trace/log index. Hosts retain
   ownership of querying, authorization, limits, and ordering."
-  [{:keys [title eyebrow base-path work-path work-label enhancement-path
+  [{:keys [title eyebrow base-path work-path work-label post-actions enhancement-path
            live-attributes summary traces logs trace-filters]}]
   (let [base (normalize-base-path base-path)
+        actions (build-post-actions base post-actions work-path work-label)
         filters (trace-filter-model base trace-filters)
         trace-views
         (into []
@@ -218,8 +323,8 @@
     {:title (text (or title "OpenTelemetry"))
      :eyebrow (text (or eyebrow "OpenTelemetry"))
      :homePath (mounted-path base "")
-     :workPath (when work-path (mounted-path base work-path))
-     :workLabel (text (or work-label "Generate work"))
+     :postActions actions
+     :hasPostActions (boolean (seq actions))
      :enhanced (boolean enhancement-path)
      :enhancementPath (when enhancement-path
                         (mounted-path base enhancement-path))
@@ -239,18 +344,19 @@
 (defn trace-model
   "Build a bounded trace-detail presentation model from a host-shaped span
   tree. The renderer caps nesting depth independently of host input."
-  [{:keys [title eyebrow base-path work-path work-label trace]}]
+  [{:keys [title eyebrow base-path work-path work-label post-actions trace]}]
   (let [flat (-> (:spanTree trace) flatten-tree with-timeline)
         root (first flat)
         status (if (some #(= "error" (str/lower-case (text (:status %)))) flat)
                  "error" "ok")
-        base (normalize-base-path base-path)]
+        base (normalize-base-path base-path)
+        actions (build-post-actions base post-actions work-path work-label)]
     {:title (text (or title "Trace detail"))
      :eyebrow (text (or eyebrow "OpenTelemetry"))
      :traceView true
      :homePath (mounted-path base "")
-     :workPath (when work-path (mounted-path base work-path))
-     :workLabel (text (or work-label "Generate work"))
+     :postActions actions
+     :hasPostActions (boolean (seq actions))
      :trace {:id (text (:traceId trace))
              :rootName (text (or (:name root) "Trace detail"))
              :status status

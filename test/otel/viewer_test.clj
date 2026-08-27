@@ -47,6 +47,33 @@
     (is (str/includes? html
                        (str "href=\"/ops/otel/traces/" trace-id "\"")))))
 
+(deftest multiple-post-actions-preserve-work-path-compatibility
+  (let [html (viewer/render-fragment
+              (merge index-data
+                     {:base-path "/ops/otel"
+                      :work-path "work"
+                      :work-label "Generate work"
+                      :post-actions [{:path "agent/without-response"
+                                      :label "Run <without> response"}
+                                     {:path "/agent/with-response"
+                                      :label "Run with response"}]}))]
+    (is (str/includes? html
+                       "action=\"/ops/otel/work\" method=\"post\""))
+    (is (str/includes? html
+                       "action=\"/ops/otel/agent/without-response\" method=\"post\""))
+    (is (str/includes? html "Run &lt;without&gt; response"))
+    (is (str/includes? html
+                       "action=\"/ops/otel/agent/with-response\" method=\"post\""))
+    (is (= 3 (count (re-seq #"method=\"post\"" html))))
+    (is (not (str/includes? html "<script"))
+        "multiple actions retain the zero-JavaScript baseline"))
+  (let [actions (mapv (fn [i] {:path (str "run/" i)
+                                :label (apply str (repeat 100 "x"))})
+                      (range 12))
+        model (viewer/index-model (assoc index-data :post-actions actions))]
+    (is (= 8 (count (:postActions model))))
+    (is (= 80 (count (get-in model [:postActions 0 :label]))))))
+
 (deftest bounded-rendering-and-escaping
   (testing "invalid trace ids are omitted and host data is escaped"
     (let [html (viewer/render-fragment
@@ -63,6 +90,94 @@
       (is (str/includes? html "--depth:1"))
       (is (str/includes? html "http.request.method"))
       (is (str/includes? html "otel-status-error")))))
+
+(deftest genai-and-samizdat-observations-are-private-bounded-and-escaped
+  (let [secret "NEVER-RENDER-RAW"
+        sanitized (str "safe <answer> " (apply str (repeat 2100 "z")))
+        generation
+        {:traceId trace-id
+         :spanTree
+         [{:spanId "agent" :name "samizdat run" :durationNs 100
+           :attributes {"samizdat.run.id" "run-1"}
+           :children
+           [{:spanId "branch" :name "branch W0" :durationNs 90
+             :attributes {"samizdat.branch.id" "W0"}
+             :children
+             [{:spanId "turn" :name "turn 1" :durationNs 80
+               :attributes {"samizdat.turn.number" 1}
+               :children
+               [{:spanId "generation" :name "chat" :durationNs 70
+                 :attributes
+                 {"gen_ai.operation.name" "chat"
+                  "gen_ai.provider.name" "openai"
+                  "gen_ai.request.model" "local-model"
+                  "gen_ai.usage.input_tokens" 42
+                  "gen_ai.usage.output_tokens" 9
+                  "gen_ai.usage.cache_read.input_tokens" 7
+                  "gen_ai.response.finish_reasons" "stop"
+                  "gen_ai.input.messages" secret
+                  "gen_ai.output.messages" secret
+                  "samizdat.prompt" secret
+                  "samizdat.system.instructions" secret
+                  "samizdat.reasoning" secret
+                  "samizdat.tool.args" secret
+                  "samizdat.response.content_state" "captured"
+                  "samizdat.response.sanitized" sanitized}
+                 :children
+                 [{:spanId "tool" :name "read_file" :durationNs 10
+                   :attributes {"samizdat.tool.name" "read_file"
+                                "tool.call.arguments" secret}}]}]}]}]}]}
+        model (viewer/trace-model {:trace generation})
+        observation (get-in model [:trace :spans 3 :generation])
+        html (viewer/render-fragment {:trace generation})]
+    (doseq [role ["Agent" "Branch" "Turn" "Generation" "Tool"]]
+      (is (str/includes? html (str ">" role "</span>"))))
+    (doseq [value ["openai" "local-model" "42" "9" "7" "stop"]]
+      (is (str/includes? html value)))
+    (is (= {:provider "openai" :model "local-model"
+            :inputTokens "42" :outputTokens "9" :cacheTokens "7"
+            :finishReason "stop"}
+           (select-keys observation
+                        [:provider :model :inputTokens :outputTokens
+                         :cacheTokens :finishReason])))
+    (is (str/includes? html "Sanitized response"))
+    (is (str/includes? html "safe &lt;answer&gt;"))
+    (is (= 2000
+           (count (:response observation)))
+        "the response, including its ellipsis, is capped at 2,000 characters")
+    (is (str/includes? html "…</pre>"))
+    (is (not (str/includes? html secret)))
+    (is (not (str/includes? html "gen_ai.input.messages")))
+    (is (not (str/includes? html "samizdat.response.sanitized")))))
+
+(deftest response-requires-explicit-captured-state
+  (doseq [attributes
+          [{"gen_ai.operation.name" "chat"
+            "samizdat.response.sanitized" "SECRET_WITHOUT_STATE"}
+           {"gen_ai.operation.name" "chat"
+            "samizdat.response.content_state" "omitted"
+            "samizdat.response.sanitized" "SECRET_WHILE_OMITTED"}
+           {"gen_ai.operation.name" "chat"
+            "samizdat.response.content_state" "captured"
+            "gen_ai.output.messages" "SECRET_ALTERNATE"
+            "gen_ai.completion" "SECRET_COMPLETION"}]]
+    (let [html (viewer/render-fragment
+                {:trace {:traceId trace-id
+                         :spanTree [{:spanId "g" :name "chat"
+                                     :durationNs 1
+                                     :attributes attributes}]}})]
+      (is (str/includes? html "Content not recorded (privacy default)"))
+      (is (not (str/includes? html "SECRET_")))))
+  (let [html (viewer/render-fragment
+              {:trace {:traceId trace-id
+                       :spanTree
+                       [{:spanId "g" :name "chat" :durationNs 1
+                         :attributes
+                         {"gen_ai.operation.name" "chat"
+                          "samizdat.response.content_state" "captured"
+                          "samizdat.response.sanitized" "bounded safe output"}}]}})]
+    (is (str/includes? html "bounded safe output"))
+    (is (not (str/includes? html "Content not recorded")))))
 
 (deftest zero-javascript-and-strict-csp-enhancement
   (let [baseline (viewer/render-page index-data)

@@ -51,8 +51,22 @@ Public rendering surface:
 - `index-model`, `trace-model`, `trace-filter-model`, `normalize-base-path`, and
   `mounted-path`
 
-Routes passed as `:work-path` or `:enhancement-path` are resolved beneath
-`:base-path`. Omitting enhancement options produces a zero-JavaScript viewer.
+Routes passed as `:work-path`, `:post-actions`, or `:enhancement-path` are
+resolved beneath `:base-path`. `:post-actions` accepts up to eight
+`{:path string :label string}` actions. The older `:work-path` and
+`:work-label` pair remains supported and becomes the first action when both
+forms are present. Omitting enhancement options produces a zero-JavaScript
+viewer; every action remains an ordinary POST form.
+
+Spans carrying `gen_ai.operation.name` or Samizdat semantic attributes receive
+compact Agent, Branch, Turn, Generation, and Tool badges. Generation details
+show provider/model, token counts, and finish reason when present. Response
+content is private by default: the renderer only displays
+`samizdat.response.sanitized` when `samizdat.response.content_state` is exactly
+`captured`, and caps that already-sanitized value at 2,000 characters. Prompt,
+system, reasoning, message-content, and tool-argument attributes are excluded
+from generic attribute rows. With an omitted state (or any state other than
+`captured`) the UI explicitly says `Content not recorded (privacy default)`.
 
 Supplying `:trace-filters` adds a semantic GET form whose action is the mounted
 index path. The host owns query parsing and storage and passes the selected

@@ -6,7 +6,7 @@
     </div>
     <nav aria-label="Viewer actions">
       <a class="otel-back-link" href="{{homePath}}">{% if traceView %}← All traces{% else %}Refresh{% endif %}</a>
-      {% if workPath %}<form action="{{workPath}}" method="post"{% if enhanced %} data-otel-work{% endif %}><button type="submit">{{workLabel}}</button></form>{% endif %}
+      {% if hasPostActions %}{% for action in postActions %}<form action="{{action.path}}" method="post"{% if enhanced %} data-otel-work{% endif %}><button type="submit">{{action.label}}</button></form>{% endfor %}{% endif %}
     </nav>
   </header>
 
@@ -22,10 +22,23 @@
       <li style="--depth:{{span.depth}};--start:{{span.startPercent}}%;--width:{{span.widthPercent}}%">
         <details{% if span.open %} open{% endif %}>
           <summary>
-            <span class="otel-span-name{% if span.error %} otel-error{% endif %}">{{span.name}}</span>
+            <span class="otel-span-title"><span class="otel-span-name{% if span.error %} otel-error{% endif %}">{{span.name}}</span>{% if span.role %}<span class="otel-role otel-role-{{span.role|lower}}">{{span.role}}</span>{% endif %}</span>
             <span class="otel-track" aria-hidden="true"><span></span></span>
             <time>{{span.duration}}</time>
           </summary>
+          {% if span.generation %}
+          <section class="otel-generation" aria-label="Generation observation">
+            <dl>
+              {% if span.generation.provider %}<div><dt>Provider</dt><dd>{{span.generation.provider}}</dd></div>{% endif %}
+              {% if span.generation.model %}<div><dt>Model</dt><dd>{{span.generation.model}}</dd></div>{% endif %}
+              {% if span.generation.inputTokens %}<div><dt>Input tokens</dt><dd>{{span.generation.inputTokens}}</dd></div>{% endif %}
+              {% if span.generation.outputTokens %}<div><dt>Output tokens</dt><dd>{{span.generation.outputTokens}}</dd></div>{% endif %}
+              {% if span.generation.cacheTokens %}<div><dt>Cache tokens</dt><dd>{{span.generation.cacheTokens}}</dd></div>{% endif %}
+              {% if span.generation.finishReason %}<div><dt>Finish reason</dt><dd>{{span.generation.finishReason}}</dd></div>{% endif %}
+            </dl>
+            {% if span.generation.responseRecorded %}<div class="otel-response"><strong>Sanitized response</strong><pre>{{span.generation.response}}</pre></div>{% else %}<p class="otel-content-omitted">Content not recorded (privacy default)</p>{% endif %}
+          </section>
+          {% endif %}
           <dl class="otel-span-meta">
             <div><dt>Kind</dt><dd>{{span.kind}}</dd></div>
             <div><dt>Span</dt><dd><code>{{span.id}}</code></dd></div>
