@@ -21,8 +21,10 @@
 (def ^:private max-duration-length 32)
 (def ^:private max-post-actions 8)
 (def ^:private max-action-label-length 80)
-(def ^:private max-sanitized-prompt-length 2000)
 (def ^:private max-sanitized-response-length 2000)
+(def ^:private max-kindly-items 16)
+(def ^:private max-kindly-table-rows 16)
+(def ^:private max-kindly-table-columns 12)
 (def ^:private trace-id-pattern #"[0-9a-f]{32}")
 (def ^:private duration-pattern #"[0-9]+(?:\.[0-9]+)?")
 (def ^:private fragment-template
@@ -181,83 +183,110 @@
    "request.messages" "request_messages" "message.content" "message_content"
    "tool.call.arguments" "tool_call.arguments" "tool.calls.arguments"
    "tool_calls.arguments" "tool.arguments" "tool_arguments" "tool.args"
-   "tool_args"])
+   "tool_args" "response.sanitized" "content_state" "ai.completion"
+   "llm.completions"])
 
 (defn- sensitive-attribute? [attribute]
   (let [attribute (attribute-name attribute)]
-    (or (= attribute "samizdat.response.sanitized")
-        (= attribute "samizdat.response.content_state")
-        (= attribute "gen_ai.completion")
-        (= attribute "llm.completions")
-        (some #(str/includes? attribute %) sensitive-attribute-fragments))))
+    (some #(str/includes? attribute %) sensitive-attribute-fragments)))
 
-(defn- attribute-rows [attributes]
+(defn- attribute-rows [attributes hidden-attributes]
   (cond
     (map? attributes)
     (mapv (fn [[k v]] {:name (text k) :value (text v)})
           (sort-by (comp str key)
-                   (remove (comp sensitive-attribute? key) attributes)))
+                   (remove (fn [[k _]]
+                             (or (sensitive-attribute? k)
+                                 (contains? hidden-attributes
+                                            (attribute-name k))))
+                           attributes)))
 
     (str/blank? (text attributes)) []
     :else [{:name "Attributes" :value (text attributes)}]))
 
-(defn- attribute-value [attributes name]
-  (when (map? attributes)
-    (some (fn [[k value]]
-            (when (= name (attribute-name k)) value))
-          attributes)))
+(defn- role-class [role]
+  (some-> (bounded-string role max-action-label-length)
+          str/lower-case
+          (str/replace #"[^a-z0-9_-]+" "-")
+          (str/replace #"(^-+|-+$)" "")))
 
-(defn- present-attribute [attributes name]
-  (bounded-display-value (attribute-value attributes name)
-                         max-filter-label-length))
+(defn- kindly-options [value]
+  (let [options (:kindly/options (meta value))]
+    (if (map? options) options {})))
 
-(defn- span-role [attributes]
-  (let [operation (some-> (attribute-value attributes "gen_ai.operation.name")
-                          text str/lower-case)]
+(defn- kindly-unwrapped-value [value options]
+  (if (and (:wrapped-value options)
+           (sequential? value)
+           (= 1 (count value)))
+    (first value)
+    value))
+
+(defn- kindly-table [value]
+  (when (sequential? value)
+    (let [rows (vec (take max-kindly-table-rows (filter map? value)))
+          columns (vec (take max-kindly-table-columns (keys (first rows))))]
+      (when (and (seq rows) (seq columns))
+        {:table true
+         :headers (mapv (fn [column] {:label (text column)}) columns)
+         :rows (mapv (fn [row]
+                       {:cells (mapv (fn [column]
+                                      {:value (bounded-display-value
+                                               (get row column)
+                                               max-filter-label-length)})
+                                    columns)})
+                     rows)}))))
+
+(declare kindly-item)
+
+(defn- kindly-fragment [value]
+  (when (sequential? value)
+    (let [items (into []
+                      (mapcat (fn [child]
+                                (when-let [item (kindly-item child)]
+                                  (if (:fragment item) (:items item) [item]))))
+                      (take max-kindly-items value))]
+      (when (seq items) {:fragment true :items items}))))
+
+(defn- kindly-item [value]
+  (let [kind (:kindly/kind (meta value))
+        options (kindly-options value)
+        display-value (kindly-unwrapped-value value options)]
     (cond
-      (or (= operation "execute_tool")
-          (attribute-value attributes "samizdat.tool.name")) "Tool"
-      (#{"chat" "text_completion" "generate_content"} operation) "Generation"
-      (attribute-value attributes "samizdat.intervention.action") "Intervention"
-      (attribute-value attributes "samizdat.turn.number") "Turn"
-      (attribute-value attributes "samizdat.branch.id") "Branch"
-      (attribute-value attributes "samizdat.control.driver") "Control"
-      (or (= operation "invoke_agent")
-          (attribute-value attributes "samizdat.run.id")) "Agent"
+      (= :kind/fragment kind) (kindly-fragment value)
+      (= :kind/table kind) (kindly-table value)
+      (= :kind/code kind)
+      (when-let [content (bounded-display-string display-value
+                                                 max-sanitized-response-length)]
+        {:code true
+         :label (bounded-string (:otel.viewer/label options)
+                                max-action-label-length)
+         :value content})
+      (contains? #{:kind/println :kind/pprint :kind/md} kind)
+      (when-let [content (bounded-display-string display-value
+                                                 max-filter-label-length)]
+        {:text true :value content})
       :else nil)))
 
-(defn- generation-view [attributes role]
-  (when (= "Generation" role)
-    (let [prompt-state (some-> (attribute-value attributes
-                                               "samizdat.prompt.content_state")
-                               text str/lower-case)
-          response-state (some-> (attribute-value attributes
-                                                 "samizdat.response.content_state")
-                                 text str/lower-case)
-          prompt (when (= "captured" prompt-state)
-                   (bounded-display-string
-                    (attribute-value attributes "samizdat.prompt.sanitized")
-                    max-sanitized-prompt-length))
-          response (when (= "captured" response-state)
-                     (bounded-display-string
-                      (attribute-value attributes "samizdat.response.sanitized")
-                      max-sanitized-response-length))]
-      {:provider (present-attribute attributes "gen_ai.provider.name")
-       :model (or (present-attribute attributes "gen_ai.response.model")
-                  (present-attribute attributes "gen_ai.request.model"))
-       :inputTokens (present-attribute attributes "gen_ai.usage.input_tokens")
-       :outputTokens (present-attribute attributes "gen_ai.usage.output_tokens")
-       :cacheTokens (or (present-attribute attributes
-                                          "gen_ai.usage.cache_read.input_tokens")
-                        (present-attribute attributes
-                                          "gen_ai.usage.cached_input_tokens"))
-       :finishReason (present-attribute attributes "gen_ai.response.finish_reasons")
-       :contentRecorded (boolean (or prompt response))
-       :contentOmitted (not (boolean (or prompt response)))
-       :promptRecorded (boolean prompt)
-       :prompt prompt
-       :responseRecorded (boolean response)
-       :response response})))
+(defn- kindly-view [note]
+  (when (and (map? note) (contains? note :value))
+    (let [value (:value note)
+          options (kindly-options value)
+          role (bounded-string (:otel.viewer/role options)
+                               max-action-label-length)
+          tone (some-> (:otel.viewer/tone options) attribute-name)
+          item (kindly-item value)
+          hidden (into #{} (map attribute-name)
+                       (take 64 (:otel.viewer/hide-attributes options)))]
+      {:role role
+       :roleClass (role-class role)
+       :roleTone (when (contains? #{"accent" "warning" "tool"} tone) tone)
+       :open? (true? (:otel.viewer/open? options))
+       :hiddenAttributes hidden
+       :card (when item
+               {:ariaLabel (or (bounded-string (:otel.viewer/label options)
+                                               max-action-label-length)
+                               "Span observation")
+                :items (if (:fragment item) (:items item) [item])})})))
 
 (defn- flatten-tree
   ([forest] (flatten-tree forest 0))
@@ -291,13 +320,15 @@
 
 (defn- span-view [span]
   (let [attributes (:attributes span)
-        role (span-role attributes)]
+        presentation (kindly-view (:kindly span))]
     {:id (text (:spanId span))
      :parentId (text (:parentSpanId span))
      :name (text (or (:name span) "(unnamed span)"))
      :kind (text (:kind span))
-     :role role
-     :generation (generation-view attributes role)
+     :role (:role presentation)
+     :roleClass (:roleClass presentation)
+     :roleTone (:roleTone presentation)
+     :card (:card presentation)
      :depth (min max-render-depth (max 0 (or (:depth span) 0)))
      :duration (duration-label (:durationNs span))
      :startPercent (:startPercent span)
@@ -305,8 +336,9 @@
      :error (= "error" (str/lower-case (text (:status span))))
      :statusMessage (text (:statusMessage span))
      :open (or (zero? (or (:depth span) 0))
-               (= "Intervention" role))
-     :attributes (attribute-rows attributes)}))
+               (:open? presentation))
+     :attributes (attribute-rows attributes
+                                 (or (:hiddenAttributes presentation) #{}))}))
 
 (defn- log-view [log]
   {:timestamp (text (:timestamp log))

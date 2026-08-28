@@ -31,6 +31,34 @@
    :window-options [{:value "15m" :label "Last 15 minutes"}
                     {:value "1h" :label "Last hour"}]})
 
+(defn kind-value [value kind options]
+  (let [metadata {:kindly/kind kind :kindly/options options}]
+    (if (instance? clojure.lang.IObj value)
+      (with-meta value metadata)
+      (with-meta [value]
+        (assoc metadata :kindly/options
+               (assoc (or options {}) :wrapped-value true))))))
+
+(defn kind-table [row]
+  (kind-value [row] :kind/table nil))
+
+(defn kind-code [label value]
+  (kind-value value :kind/code {:otel.viewer/label label}))
+
+(defn kind-text [value]
+  (kind-value value :kind/println nil))
+
+(defn span-note
+  ([role items] (span-note role nil false items []))
+  ([role tone open? items hidden]
+   {:value
+    (kind-value items :kind/fragment
+                {:otel.viewer/role role
+                 :otel.viewer/tone tone
+                 :otel.viewer/open? open?
+                 :otel.viewer/label (str role " observation")
+                 :otel.viewer/hide-attributes hidden})}))
+
 (deftest mount-prefixes
   (is (= "" (viewer/normalize-base-path nil)))
   (is (= "/ops/otel" (viewer/normalize-base-path "ops/otel///")))
@@ -99,18 +127,33 @@
         {:traceId trace-id
          :spanTree
          [{:spanId "agent" :name "samizdat run" :durationNs 100
+           :kindly (span-note "Agent" [])
            :attributes {"samizdat.run.id" "run-1"}
            :children
            [{:spanId "control" :name "control loop" :durationNs 95
+             :kindly (span-note "Control" [])
              :attributes {"samizdat.control.driver" "beam"}
              :children
              [{:spanId "branch" :name "branch W0" :durationNs 90
+               :kindly (span-note "Branch" [])
                :attributes {"samizdat.branch.id" "W0"}
                :children
                [{:spanId "turn" :name "turn 1" :durationNs 80
+                 :kindly (span-note "Turn" [])
                  :attributes {"samizdat.turn.number" 1}
                  :children
                  [{:spanId "generation" :name "chat" :durationNs 70
+                   :kindly
+                   (span-note
+                    "Generation" :accent false
+                    [(kind-table
+                      (array-map :Provider "openai" :Model "local-model"
+                                 :Input-tokens 42 :Output-tokens 9
+                                 :Cache-tokens 7 :Finish-reason "stop"))
+                     (kind-code "Captured prompt" prompt)
+                     (kind-code "Captured response" sanitized)]
+                    ["samizdat.prompt.sanitized"
+                     "samizdat.response.sanitized"])
                    :attributes
                    {"gen_ai.operation.name" "chat"
                   "gen_ai.provider.name" "openai"
@@ -131,28 +174,24 @@
                   "samizdat.response.sanitized" sanitized}
                    :children
                    [{:spanId "tool" :name "read_file" :durationNs 10
+                     :kindly (span-note "Tool" :tool false [] [])
                      :attributes {"samizdat.tool.name" "read_file"
                                   "tool.call.arguments" secret}}]}]}]}]}]}]}
         model (viewer/trace-model {:trace generation})
-        observation (get-in model [:trace :spans 4 :generation])
+        observation (get-in model [:trace :spans 4 :card])
         html (viewer/render-fragment {:trace generation})]
     (doseq [role ["Agent" "Control" "Branch" "Turn" "Generation" "Tool"]]
       (is (str/includes? html (str ">" role "</span>"))))
     (doseq [value ["openai" "local-model" "42" "9" "7" "stop"]]
       (is (str/includes? html value)))
-    (is (= {:provider "openai" :model "local-model"
-            :inputTokens "42" :outputTokens "9" :cacheTokens "7"
-            :finishReason "stop"}
-           (select-keys observation
-                        [:provider :model :inputTokens :outputTokens
-                         :cacheTokens :finishReason])))
+    (is (= 3 (count (:items observation))))
     (is (str/includes? html "Captured prompt"))
     (is (str/includes? html "safe &lt;prompt&gt;"))
-    (is (= 2000 (count (:prompt observation))))
+    (is (= 2000 (count (get-in observation [:items 1 :value]))))
     (is (str/includes? html "Captured response"))
     (is (str/includes? html "safe &lt;answer&gt;"))
     (is (= 2000
-           (count (:response observation)))
+           (count (get-in observation [:items 2 :value])))
         "the response, including its ellipsis, is capped at 2,000 characters")
     (is (str/includes? html "…</pre>"))
     (is (not (str/includes? html secret)))
@@ -160,7 +199,7 @@
     (is (not (str/includes? html "samizdat.prompt.sanitized")))
     (is (not (str/includes? html "samizdat.response.sanitized")))))
 
-(deftest response-requires-explicit-captured-state
+(deftest captured-content-requires-explicit-kindly-advice
   (doseq [attributes
           [{"gen_ai.operation.name" "chat"
             "samizdat.response.sanitized" "SECRET_WITHOUT_STATE"}
@@ -176,12 +215,15 @@
                          :spanTree [{:spanId "g" :name "chat"
                                      :durationNs 1
                                      :attributes attributes}]}})]
-      (is (str/includes? html "Content not recorded (privacy default)"))
       (is (not (str/includes? html "SECRET_")))))
   (let [html (viewer/render-fragment
               {:trace {:traceId trace-id
                        :spanTree
                        [{:spanId "g" :name "chat" :durationNs 1
+                         :kindly
+                         (span-note "Generation"
+                                    [(kind-code "Captured response"
+                                                "bounded safe output")])
                          :attributes
                          {"gen_ai.operation.name" "chat"
                           "samizdat.response.content_state" "captured"
@@ -189,22 +231,34 @@
     (is (str/includes? html "bounded safe output"))
     (is (not (str/includes? html "Content not recorded")))))
 
-(deftest prompt-and-intervention-require-explicit-semantic-state
+(deftest library-kindly-advice-controls-roles-content-and-open-state
   (let [html (viewer/render-fragment
               {:trace {:traceId trace-id
                        :spanTree
                        [{:spanId "g" :name "chat" :durationNs 2
+                         :kindly
+                         (span-note "Generation"
+                                    [(kind-text
+                                      "Content not recorded (privacy default)")])
                          :attributes
                          {"gen_ai.operation.name" "chat"
                           "samizdat.prompt.sanitized" "HIDDEN_WITHOUT_STATE"}}
                         {:spanId "i" :name "controller intervention" :durationNs 1
+                         :kindly
+                         (span-note
+                          "Intervention" :warning true
+                          [(kind-table
+                            (array-map :Action "revise"
+                                       :Reason "needs a concrete mechanism"))]
+                          ["samizdat.intervention.reason"])
                          :attributes
                          {"samizdat.intervention.action" "revise"
                           "samizdat.intervention.reason" "needs a concrete mechanism"}}]}})]
     (is (not (str/includes? html "HIDDEN_WITHOUT_STATE")))
     (is (str/includes? html "Content not recorded (privacy default)"))
     (is (str/includes? html ">Intervention</span>"))
-    (is (str/includes? html "samizdat.intervention.reason"))
+    (is (str/includes? html "otel-role-tone-warning"))
+    (is (not (str/includes? html "samizdat.intervention.reason")))
     (is (str/includes? html "needs a concrete mechanism"))))
 
 (deftest zero-javascript-and-strict-csp-enhancement

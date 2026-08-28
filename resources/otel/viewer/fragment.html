@@ -22,23 +22,17 @@
       <li style="--depth:{{span.depth}};--start:{{span.startPercent}}%;--width:{{span.widthPercent}}%">
         <details{% if span.open %} open{% endif %}>
           <summary>
-            <span class="otel-span-title"><span class="otel-span-name{% if span.error %} otel-error{% endif %}">{{span.name}}</span>{% if span.role %}<span class="otel-role otel-role-{{span.role|lower}}">{{span.role}}</span>{% endif %}</span>
+            <span class="otel-span-title"><span class="otel-span-name{% if span.error %} otel-error{% endif %}">{{span.name}}</span>{% if span.role %}<span class="otel-role{% if span.roleClass %} otel-role-{{span.roleClass}}{% endif %}{% if span.roleTone %} otel-role-tone-{{span.roleTone}}{% endif %}">{{span.role}}</span>{% endif %}</span>
             <span class="otel-track" aria-hidden="true"><span></span></span>
             <time>{{span.duration}}</time>
           </summary>
-          {% if span.generation %}
-          <section class="otel-generation" aria-label="Generation observation">
-            <dl>
-              {% if span.generation.provider %}<div><dt>Provider</dt><dd>{{span.generation.provider}}</dd></div>{% endif %}
-              {% if span.generation.model %}<div><dt>Model</dt><dd>{{span.generation.model}}</dd></div>{% endif %}
-              {% if span.generation.inputTokens %}<div><dt>Input tokens</dt><dd>{{span.generation.inputTokens}}</dd></div>{% endif %}
-              {% if span.generation.outputTokens %}<div><dt>Output tokens</dt><dd>{{span.generation.outputTokens}}</dd></div>{% endif %}
-              {% if span.generation.cacheTokens %}<div><dt>Cache tokens</dt><dd>{{span.generation.cacheTokens}}</dd></div>{% endif %}
-              {% if span.generation.finishReason %}<div><dt>Finish reason</dt><dd>{{span.generation.finishReason}}</dd></div>{% endif %}
-            </dl>
-            {% if span.generation.promptRecorded %}<div class="otel-prompt"><strong>Captured prompt</strong><pre>{{span.generation.prompt}}</pre></div>{% endif %}
-            {% if span.generation.responseRecorded %}<div class="otel-response"><strong>Captured response</strong><pre>{{span.generation.response}}</pre></div>{% endif %}
-            {% if span.generation.contentOmitted %}<p class="otel-content-omitted">Content not recorded (privacy default)</p>{% endif %}
+          {% if span.card %}
+          <section class="otel-observation" aria-label="{{span.card.ariaLabel}}">
+            {% for item in span.card.items %}
+            {% if item.table %}<div class="otel-kind-table-wrap"><table class="otel-kind-table"><thead><tr>{% for header in item.headers %}<th>{{header.label}}</th>{% endfor %}</tr></thead><tbody>{% for row in item.rows %}<tr>{% for cell in row.cells %}<td>{{cell.value}}</td>{% endfor %}</tr>{% endfor %}</tbody></table></div>{% endif %}
+            {% if item.code %}<div class="otel-content">{% if item.label %}<strong>{{item.label}}</strong>{% endif %}<pre>{{item.value}}</pre></div>{% endif %}
+            {% if item.text %}<p class="otel-content-note">{{item.value}}</p>{% endif %}
+            {% endfor %}
           </section>
           {% endif %}
           <dl class="otel-span-meta">

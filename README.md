@@ -58,15 +58,44 @@ resolved beneath `:base-path`. `:post-actions` accepts up to eight
 forms are present. Omitting enhancement options produces a zero-JavaScript
 viewer; every action remains an ordinary POST form.
 
-Spans carrying `gen_ai.operation.name` or Samizdat semantic attributes receive
-compact Agent, Branch, Turn, Generation, and Tool badges. Generation details
-show provider/model, token counts, and finish reason when present. Response
-content is private by default: the renderer only displays
-`samizdat.response.sanitized` when `samizdat.response.content_state` is exactly
-`captured`, and caps that already-sanitized value at 2,000 characters. Prompt,
-system, reasoning, message-content, and tool-argument attributes are excluded
-from generic attribute rows. With an omitted state (or any state other than
-`captured`) the UI explicitly says `Content not recorded (privacy default)`.
+The viewer does not infer application semantics from OpenTelemetry attribute
+names. A library may enrich a span with a Kindly note under `:kindly`; the
+viewer reads the standard `:kindly/kind` and `:kindly/options` value metadata.
+This keeps role names, observation tables, captured content, and default-open
+behavior beside the library's instrumentation metadata instead of hard-coding
+them in the viewer.
+
+```clojure
+{:spanId "..."
+ :name "chat"
+ :kindly
+ {:value
+  (with-meta
+    [(with-meta
+       [(array-map :Provider "local" :Model "example-model")]
+       {:kindly/kind :kind/table})]
+    {:kindly/kind :kind/fragment
+     :kindly/options
+     {:otel.viewer/role "Generation"
+      :otel.viewer/tone :accent
+      :otel.viewer/label "Generation observation"
+      :otel.viewer/hide-attributes ["app.prompt.sanitized"]}})}}
+```
+
+The `:kindly` value uses the same note shape as Kindly renderers:
+`{:value annotated-value}`. The bounded, server-side adapter currently supports
+`:kind/fragment`, `:kind/table`, `:kind/code`, `:kind/println`, `:kind/pprint`,
+and `:kind/md`; unsupported kinds fall back to ordinary span attributes. It
+also honors Kindly's scalar wrapping contract via
+`:kindly/options {:wrapped-value true}`. Viewer-specific behavior lives only in
+namespaced options: `:otel.viewer/role`, `:otel.viewer/tone`,
+`:otel.viewer/label`, `:otel.viewer/open?`, and
+`:otel.viewer/hide-attributes`.
+
+Prompt, system, reasoning, message-content, and tool-argument attributes remain
+excluded from generic rows even without enrichment. Libraries decide whether
+to place redacted content into an explicit Kindly `:kind/code` item; every code
+item is escaped and capped at 2,000 characters.
 
 Supplying `:trace-filters` adds a semantic GET form whose action is the mounted
 index path. The host owns query parsing and storage and passes the selected
