@@ -93,6 +93,7 @@
 
 (deftest genai-and-samizdat-observations-are-private-bounded-and-escaped
   (let [secret "NEVER-RENDER-RAW"
+        prompt (str "safe <prompt> " (apply str (repeat 2100 "p")))
         sanitized (str "safe <answer> " (apply str (repeat 2100 "z")))
         generation
         {:traceId trace-id
@@ -124,6 +125,8 @@
                   "samizdat.system.instructions" secret
                   "samizdat.reasoning" secret
                   "samizdat.tool.args" secret
+                  "samizdat.prompt.content_state" "captured"
+                  "samizdat.prompt.sanitized" prompt
                   "samizdat.response.content_state" "captured"
                   "samizdat.response.sanitized" sanitized}
                    :children
@@ -143,7 +146,10 @@
            (select-keys observation
                         [:provider :model :inputTokens :outputTokens
                          :cacheTokens :finishReason])))
-    (is (str/includes? html "Sanitized response"))
+    (is (str/includes? html "Captured prompt"))
+    (is (str/includes? html "safe &lt;prompt&gt;"))
+    (is (= 2000 (count (:prompt observation))))
+    (is (str/includes? html "Captured response"))
     (is (str/includes? html "safe &lt;answer&gt;"))
     (is (= 2000
            (count (:response observation)))
@@ -151,6 +157,7 @@
     (is (str/includes? html "…</pre>"))
     (is (not (str/includes? html secret)))
     (is (not (str/includes? html "gen_ai.input.messages")))
+    (is (not (str/includes? html "samizdat.prompt.sanitized")))
     (is (not (str/includes? html "samizdat.response.sanitized")))))
 
 (deftest response-requires-explicit-captured-state
@@ -181,6 +188,24 @@
                           "samizdat.response.sanitized" "bounded safe output"}}]}})]
     (is (str/includes? html "bounded safe output"))
     (is (not (str/includes? html "Content not recorded")))))
+
+(deftest prompt-and-intervention-require-explicit-semantic-state
+  (let [html (viewer/render-fragment
+              {:trace {:traceId trace-id
+                       :spanTree
+                       [{:spanId "g" :name "chat" :durationNs 2
+                         :attributes
+                         {"gen_ai.operation.name" "chat"
+                          "samizdat.prompt.sanitized" "HIDDEN_WITHOUT_STATE"}}
+                        {:spanId "i" :name "controller intervention" :durationNs 1
+                         :attributes
+                         {"samizdat.intervention.action" "revise"
+                          "samizdat.intervention.reason" "needs a concrete mechanism"}}]}})]
+    (is (not (str/includes? html "HIDDEN_WITHOUT_STATE")))
+    (is (str/includes? html "Content not recorded (privacy default)"))
+    (is (str/includes? html ">Intervention</span>"))
+    (is (str/includes? html "samizdat.intervention.reason"))
+    (is (str/includes? html "needs a concrete mechanism"))))
 
 (deftest zero-javascript-and-strict-csp-enhancement
   (let [baseline (viewer/render-page index-data)

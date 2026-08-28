@@ -21,6 +21,7 @@
 (def ^:private max-duration-length 32)
 (def ^:private max-post-actions 8)
 (def ^:private max-action-label-length 80)
+(def ^:private max-sanitized-prompt-length 2000)
 (def ^:private max-sanitized-response-length 2000)
 (def ^:private trace-id-pattern #"[0-9a-f]{32}")
 (def ^:private duration-pattern #"[0-9]+(?:\.[0-9]+)?")
@@ -217,6 +218,7 @@
       (or (= operation "execute_tool")
           (attribute-value attributes "samizdat.tool.name")) "Tool"
       (#{"chat" "text_completion" "generate_content"} operation) "Generation"
+      (attribute-value attributes "samizdat.intervention.action") "Intervention"
       (attribute-value attributes "samizdat.turn.number") "Turn"
       (attribute-value attributes "samizdat.branch.id") "Branch"
       (attribute-value attributes "samizdat.control.driver") "Control"
@@ -226,10 +228,17 @@
 
 (defn- generation-view [attributes role]
   (when (= "Generation" role)
-    (let [content-state (some-> (attribute-value attributes
-                                                "samizdat.response.content_state")
-                                text str/lower-case)
-          response (when (= "captured" content-state)
+    (let [prompt-state (some-> (attribute-value attributes
+                                               "samizdat.prompt.content_state")
+                               text str/lower-case)
+          response-state (some-> (attribute-value attributes
+                                                 "samizdat.response.content_state")
+                                 text str/lower-case)
+          prompt (when (= "captured" prompt-state)
+                   (bounded-display-string
+                    (attribute-value attributes "samizdat.prompt.sanitized")
+                    max-sanitized-prompt-length))
+          response (when (= "captured" response-state)
                      (bounded-display-string
                       (attribute-value attributes "samizdat.response.sanitized")
                       max-sanitized-response-length))]
@@ -243,6 +252,10 @@
                         (present-attribute attributes
                                           "gen_ai.usage.cached_input_tokens"))
        :finishReason (present-attribute attributes "gen_ai.response.finish_reasons")
+       :contentRecorded (boolean (or prompt response))
+       :contentOmitted (not (boolean (or prompt response)))
+       :promptRecorded (boolean prompt)
+       :prompt prompt
        :responseRecorded (boolean response)
        :response response})))
 
@@ -291,7 +304,8 @@
      :widthPercent (:widthPercent span)
      :error (= "error" (str/lower-case (text (:status span))))
      :statusMessage (text (:statusMessage span))
-     :open (zero? (or (:depth span) 0))
+     :open (or (zero? (or (:depth span) 0))
+               (= "Intervention" role))
      :attributes (attribute-rows attributes)}))
 
 (defn- log-view [log]

@@ -36,7 +36,9 @@
               {% if span.generation.cacheTokens %}<div><dt>Cache tokens</dt><dd>{{span.generation.cacheTokens}}</dd></div>{% endif %}
               {% if span.generation.finishReason %}<div><dt>Finish reason</dt><dd>{{span.generation.finishReason}}</dd></div>{% endif %}
             </dl>
-            {% if span.generation.responseRecorded %}<div class="otel-response"><strong>Sanitized response</strong><pre>{{span.generation.response}}</pre></div>{% else %}<p class="otel-content-omitted">Content not recorded (privacy default)</p>{% endif %}
+            {% if span.generation.promptRecorded %}<div class="otel-prompt"><strong>Captured prompt</strong><pre>{{span.generation.prompt}}</pre></div>{% endif %}
+            {% if span.generation.responseRecorded %}<div class="otel-response"><strong>Captured response</strong><pre>{{span.generation.response}}</pre></div>{% endif %}
+            {% if span.generation.contentOmitted %}<p class="otel-content-omitted">Content not recorded (privacy default)</p>{% endif %}
           </section>
           {% endif %}
           <dl class="otel-span-meta">
