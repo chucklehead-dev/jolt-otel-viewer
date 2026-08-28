@@ -16,6 +16,9 @@
    :spanTree [{:spanId "root" :parentSpanId "" :name "GET /work"
                :timestampUnixNano 1000 :durationNs 2000000
                :attributes {"http.request.method" "GET"}
+               :events [{:name "exception"
+                         :timestamp-unix-nano 1200
+                         :attributes {"exception.type" "example.SafeFailure"}}]
                :children [{:spanId "child" :parentSpanId "root"
                            :name "fetch" :timestampUnixNano 2000
                            :durationNs 500000 :status "error"}]}]
@@ -117,7 +120,33 @@
       (is (str/includes? html "<details open>"))
       (is (str/includes? html "--depth:1"))
       (is (str/includes? html "http.request.method"))
+      (is (str/includes? html "Span events"))
+      (is (str/includes? html "exception.type"))
+      (is (str/includes? html "example.SafeFailure"))
       (is (str/includes? html "otel-status-error")))))
+
+(deftest span-events-are-bounded-and-escaped
+  (let [long-name (str "<event-0>" (apply str (repeat 400 "n")))
+        long-value (str "</dd><script>boom</script>"
+                        (apply str (repeat 5000 "v")))
+        events (mapv (fn [index]
+                       {:name (if (zero? index) long-name (str "<event-" index ">"))
+                        :attributes (into {"payload" long-value}
+                                          (map (fn [n] [(str "key-" n) n])
+                                               (range 127)))})
+                     (range 100))
+        trace (assoc-in trace-data [:spanTree 0 :events] events)
+        model (viewer/trace-model {:trace trace})
+        html (viewer/render-fragment {:trace trace})]
+    (is (= 64 (count (get-in model [:trace :spans 0 :events]))))
+    (is (= 256 (count (get-in model [:trace :spans 0 :events 0 :name]))))
+    (is (= 128 (count (get-in model [:trace :spans 0 :events 0 :attributes]))))
+    (is (= 4096
+           (count (:value (some #(when (= "payload" (:name %)) %)
+                                (get-in model [:trace :spans 0 :events 0 :attributes]))))))
+    (is (str/includes? html "&lt;event-0&gt;"))
+    (is (str/includes? html "&lt;script&gt;boom&lt;/script&gt;"))
+    (is (not (str/includes? html "<script>boom</script>")))))
 
 (deftest genai-and-samizdat-observations-are-private-bounded-and-escaped
   (let [secret "NEVER-RENDER-RAW"

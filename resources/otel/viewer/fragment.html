@@ -42,6 +42,12 @@
             {% if span.statusMessage %}<div><dt>Status</dt><dd>{{span.statusMessage}}</dd></div>{% endif %}
             {% for attribute in span.attributes %}<div><dt>{{attribute.name}}</dt><dd>{{attribute.value}}</dd></div>{% endfor %}
           </dl>
+          {% if span.hasEvents %}
+          <section class="otel-span-events" aria-label="Span events">
+            <h3>Events</h3>
+            <ol>{% for event in span.events %}<li><div><strong>{{event.name}}</strong>{% if event.timestamp %}<code>{{event.timestamp}}</code>{% endif %}</div>{% if event.attributes %}<dl class="otel-span-meta">{% for attribute in event.attributes %}<div><dt>{{attribute.name}}</dt><dd>{{attribute.value}}</dd></div>{% endfor %}</dl>{% endif %}</li>{% endfor %}</ol>
+          </section>
+          {% endif %}
         </details>
       </li>
       {% endfor %}

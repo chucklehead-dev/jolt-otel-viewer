@@ -25,6 +25,12 @@
 (def ^:private max-kindly-items 16)
 (def ^:private max-kindly-table-rows 16)
 (def ^:private max-kindly-table-columns 12)
+(def ^:private max-span-events 64)
+(def ^:private max-attribute-rows 128)
+(def ^:private max-attribute-name-length 256)
+(def ^:private max-attribute-value-length 4096)
+(def ^:private max-event-name-length 256)
+(def ^:private max-event-timestamp-length 64)
 (def ^:private trace-id-pattern #"[0-9a-f]{32}")
 (def ^:private duration-pattern #"[0-9]+(?:\.[0-9]+)?")
 
@@ -205,7 +211,12 @@
 (defn- attribute-rows [attributes hidden-attributes]
   (cond
     (map? attributes)
-    (mapv (fn [[k v]] {:name (text k) :value (text v)})
+    (into []
+          (comp
+           (take max-attribute-rows)
+           (map (fn [[k v]]
+                  {:name (or (bounded-display-value k max-attribute-name-length) "")
+                   :value (or (bounded-display-value v max-attribute-value-length) "")})))
           (sort-by (comp str key)
                    (remove (fn [[k _]]
                              (or (sensitive-attribute? k)
@@ -334,9 +345,12 @@
                      :widthPercent (format "%.4f" (* 100.0 (/ duration extent))))))
           spans)))
 
+(declare event-view)
+
 (defn- span-view [span]
   (let [attributes (:attributes span)
-        presentation (kindly-view (:kindly span))]
+        presentation (kindly-view (:kindly span))
+        events (mapv event-view (take max-span-events (:events span)))]
     {:id (text (:spanId span))
      :parentId (text (:parentSpanId span))
      :name (text (or (:name span) "(unnamed span)"))
@@ -351,6 +365,8 @@
      :widthPercent (:widthPercent span)
      :error (= "error" (str/lower-case (text (:status span))))
      :statusMessage (text (:statusMessage span))
+     :hasEvents (boolean (seq events))
+     :events events
      :open (or (zero? (or (:depth span) 0))
                (:open? presentation))
      :attributes (attribute-rows attributes
@@ -360,6 +376,18 @@
   {:timestamp (text (:timestamp log))
    :severity (text (:severity log))
    :body (text (:body log))})
+
+(defn- event-view [event]
+  {:name (or (bounded-display-value (or (:name event) "(unnamed event)")
+                                    max-event-name-length)
+             "(unnamed event)")
+   :timestamp (or (bounded-display-value
+                   (or (:timestamp-unix-nano event)
+                       (:timeUnixNano event)
+                       (:timestamp event))
+                   max-event-timestamp-length)
+                  "")
+   :attributes (attribute-rows (:attributes event) #{})})
 
 (defn index-model
   "Build the bounded presentation model for a trace/log index. Hosts retain
