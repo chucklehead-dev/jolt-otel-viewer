@@ -27,16 +27,28 @@
 (def ^:private max-kindly-table-columns 12)
 (def ^:private trace-id-pattern #"[0-9a-f]{32}")
 (def ^:private duration-pattern #"[0-9]+(?:\.[0-9]+)?")
+
+(defmacro ^:private embed-resource
+  "Read a viewer asset while compiling this namespace and emit its contents as
+  a string constant. A self-contained application must not depend on this
+  library's source-resource directory still existing at runtime."
+  [path]
+  (let [resource (io/resource path)]
+    (when-not resource
+      (throw (ex-info "viewer resource not found while compiling"
+                      {:resource path})))
+    (slurp resource)))
+
 (def ^:private fragment-template
-  (delay (slurp (io/resource "otel/viewer/fragment.html"))))
+  (delay (embed-resource "otel/viewer/fragment.html")))
 (def ^:private page-template
-  (delay (slurp (io/resource "otel/viewer/page.html"))))
+  (delay (embed-resource "otel/viewer/page.html")))
 (def ^:private live-template
-  (delay (slurp (io/resource "otel/viewer/live.html"))))
+  (delay (embed-resource "otel/viewer/live.html")))
 (def ^:private stylesheet
-  (delay (slurp (io/resource "otel/viewer/viewer.css"))))
+  (delay (embed-resource "otel/viewer/viewer.css")))
 (def ^:private enhancement
-  (delay (slurp (io/resource "otel/viewer/viewer.js"))))
+  (delay (embed-resource "otel/viewer/viewer.js")))
 (defn styles
   "Scoped viewer CSS for a host that embeds `render-fragment`."
   []
