@@ -227,7 +227,11 @@
           columns (vec (take max-kindly-table-columns (keys (first rows))))]
       (when (and (seq rows) (seq columns))
         {:table true
-         :headers (mapv (fn [column] {:label (text column)}) columns)
+         :headers (mapv (fn [column]
+                          {:label (text (if (keyword? column)
+                                          (name column)
+                                          column))})
+                        columns)
          :rows (mapv (fn [row]
                        {:cells (mapv (fn [column]
                                       {:value (bounded-display-value

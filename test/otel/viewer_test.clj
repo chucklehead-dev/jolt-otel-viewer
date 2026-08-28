@@ -258,6 +258,8 @@
     (is (str/includes? html "Content not recorded (privacy default)"))
     (is (str/includes? html ">Intervention</span>"))
     (is (str/includes? html "otel-role-tone-warning"))
+    (is (str/includes? html "<th>Action</th>"))
+    (is (not (str/includes? html "<th>:Action</th>")))
     (is (not (str/includes? html "samizdat.intervention.reason")))
     (is (str/includes? html "needs a concrete mechanism"))))
 
