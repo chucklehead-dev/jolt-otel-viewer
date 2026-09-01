@@ -2,7 +2,7 @@
 
  :jolt/min-version "0.8.0"
 
- :deps {io.github.chucklehead-dev/time
+ :deps {jolt-lang/time
         {:git/url "https://github.com/chucklehead-dev/time.git"
          :git/sha "2494b21b25cd959573c3e6050cd475e4bf302fdb"}
         jolt-lang/jolt-crypto
