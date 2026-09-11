@@ -6,8 +6,8 @@
         {:git/url "https://github.com/chucklehead-dev/time.git"
          :git/sha "2494b21b25cd959573c3e6050cd475e4bf302fdb"}
         jolt-lang/jolt-crypto
-        {:git/url "https://github.com/casselc/jolt-crypto.git"
-         :git/sha "8bd234142d56dd75d36d58065a311f29fa08611e"}
+        {:git/url "https://github.com/jolt-lang/jolt-crypto.git"
+         :git/sha "5effcc89a3258499a79a2a3d69edad9e7800d1bf"}
         yogthos/selmer
         {:git/url "https://github.com/yogthos/Selmer"
          :git/sha "fa4a42e77b48905f87b3bf0dc1c698f2c329c722"}}
